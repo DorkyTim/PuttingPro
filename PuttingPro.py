@@ -9,7 +9,7 @@ cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 cap.set(cv2.CAP_PROP_FPS, 60.0)
 
-tracker = BallTracker(yolo_path='best.pt', confidence=0.7)
+tracker = BallTracker(yolo_path='best.pt', confidence=0.6)
 
 while cap.isOpened():
     ret, frame = cap.read()
