@@ -11,7 +11,7 @@ pathlib.PosixPath = pathlib.WindowsPath
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-confidence = 0.7
+confidence = 0.25
 show_fps = 0
 
 # Load YOLOv5 model (change path to your local best.pt)
@@ -19,7 +19,7 @@ model = torch.hub.load('ultralytics/yolov5', 'custom', path='best.pt')
 model.conf = confidence  # confidence threshold
 
 # Open webcam
-cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)  # Use 1 or 2 if 0 doesn't work
+cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # Use 1 or 2 if 0 doesn't work
 
 cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc('m','j','p','g'))
 cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc('M','J','P','G'))
