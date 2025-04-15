@@ -19,7 +19,7 @@ class BallTracker:
         self.model.conf = confidence
 
         self.next_ball_id = 0
-        self.tracked_balls = {}  # ball_id: {"pos": (x, y), "last_seen": time, "kalman": filter, "radius": r, "prediction": (x, y)}
+        self.tracked_balls = {}  # ball_id: {"pos", "last_seen", "kalman", "radius", "prediction"}
         self.fade_duration = 1.0  # seconds
 
     def _create_kalman_filter(self, init_x, init_y):
@@ -79,8 +79,21 @@ class BallTracker:
                         "prediction": center
                     }
                 else:
-                    self.tracked_balls[matched_id]['kalman'].correct(
-                        np.array([[np.float32(center[0])], [np.float32(center[1])]]))
+                    kalman = self.tracked_balls[matched_id]['kalman']
+                    prev_pos = self.tracked_balls[matched_id]['pos']
+                    dt = current_time - self.tracked_balls[matched_id]['last_seen']
+                    if dt > 0:
+                        vx = (center[0] - prev_pos[0]) / dt
+                        vy = (center[1] - prev_pos[1]) / dt
+                        alpha = 0.4
+                        prev_vx = kalman.statePost[2]
+                        prev_vy = kalman.statePost[3]
+                        vx = alpha * vx + (1 - alpha) * prev_vx
+                        vy = alpha * vy + (1 - alpha) * prev_vy
+                        kalman.statePost[2] = vx
+                        kalman.statePost[3] = vy
+                    kalman.correct(np.array([[np.float32(center[0])], [np.float32(center[1])]]))
+
                     self.tracked_balls[matched_id]['pos'] = center
                     self.tracked_balls[matched_id]['last_seen'] = current_time
                     self.tracked_balls[matched_id]['radius'] = radius
