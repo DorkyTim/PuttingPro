@@ -4,7 +4,6 @@ import torch
 import time
 import math
 import pathlib
-from TrailManager import TrailManager  # <-- New import
 
 # Ensure compatibility for torch hub on Windows
 pathlib.PosixPath = pathlib.WindowsPath
@@ -13,15 +12,14 @@ import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 class BallTracker:
-    def __init__(self, yolo_path='best.pt', confidence=0.3, trail_manager=None):
+    def __init__(self, yolo_path='best.pt', confidence=0.3):
         self.model = torch.hub.load('ultralytics/yolov5', 'custom', path=yolo_path)
         self.model.conf = confidence
 
         self.next_ball_id = 0
         self.tracked_balls = {}  # ball_id: {"pos", "last_seen", "kalman", "radius", "prediction"}
         self.fade_duration = 1.0  # seconds
-        self.dist_check = 50 # pixels to check identity
-        self.trail_manager = trail_manager or TrailManager()
+        self.dist_check = 50  # pixels to check identity
 
     def _create_kalman_filter(self, init_x, init_y):
         kalman = cv2.KalmanFilter(4, 2)
@@ -37,12 +35,8 @@ class BallTracker:
 
     def detect_ball(self, frame):
         frame = cv2.resize(frame, (854, 480))
-        output = frame.copy()
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (9, 9), 2)
         current_time = time.time()
 
-        # Predict all tracked positions
         for ball_id, info in self.tracked_balls.items():
             prediction = info['kalman'].predict()
             pred_pos = (int(prediction[0]), int(prediction[1]))
@@ -61,7 +55,7 @@ class BallTracker:
                 min_dist = float('inf')
                 matched_id = None
                 for ball_id, info in self.tracked_balls.items():
-                    pred_pos = info.get('prediction', info['pos'])
+                    pred_pos = info['prediction']
                     dist = math.hypot(center[0] - pred_pos[0], center[1] - pred_pos[1])
                     if dist < self.dist_check and dist < min_dist and current_time - info['last_seen'] < self.fade_duration:
                         min_dist = dist
@@ -100,27 +94,23 @@ class BallTracker:
 
                 matched_ids.add(matched_id)
 
-                # Add trail point
-                self.trail_manager.add_point(matched_id, center)
+        # Remove expired tracks
+        for ball_id in list(self.tracked_balls.keys()):
+            if ball_id not in matched_ids:
+                time_since_seen = current_time - self.tracked_balls[ball_id]['last_seen']
+                if time_since_seen >= self.fade_duration * 2:
+                    del self.tracked_balls[ball_id]
 
-                cv2.circle(output, center, radius, (0, 255, 0), 2)
-                cv2.putText(output, f"YOLO ID {matched_id}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-
-        # Draw predicted positions for unmatched balls
-        for ball_id, info in list(self.tracked_balls.items()):
-            if ball_id in matched_ids:
-                continue
-            time_since_seen = current_time - info['last_seen']
-            if time_since_seen < self.fade_duration:
-                prediction = info['prediction']
-                cv2.circle(output, prediction, info['radius'], (0, 255, 255), 2)
-                cv2.putText(output, f"Predicted ID {ball_id}", (prediction[0] + 10, prediction[1] - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
-                info['pos'] = prediction
-            else:
-                del self.tracked_balls[ball_id]
-
-        # Draw trails if enabled
-        output = self.trail_manager.draw(output)
-
-        return output
+        return {
+            'frame_size': (frame.shape[1], frame.shape[0]),
+            'balls': {
+                ball_id: {
+                    'pos': info['pos'],
+                    'radius': info['radius'],
+                    'prediction': info['prediction'],
+                    'last_seen': info['last_seen']
+                }
+                for ball_id, info in self.tracked_balls.items()
+                if current_time - info['last_seen'] < self.fade_duration
+            }
+        }
