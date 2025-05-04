@@ -19,8 +19,8 @@ class BallTracker:
 
         self.next_ball_id = 0
         self.tracked_balls = {}
-        self.fade_duration = 1.0
-        self.dist_check = 80  # Increased from 50
+        self.fade_duration = 2.0
+        self.dist_check = 120  # Increased from 80
 
     def _create_kalman_filter(self, init_x, init_y):
         kalman = cv2.KalmanFilter(4, 2)
@@ -29,13 +29,13 @@ class BallTracker:
                                             [0, 1, 0, 1],
                                             [0, 0, 1, 0],
                                             [0, 0, 0, 1]], np.float32)
-        kalman.processNoiseCov = np.eye(4, dtype=np.float32) * 0.03
+        kalman.processNoiseCov = np.eye(4, dtype=np.float32) * 0.1
         kalman.statePre = np.array([[init_x], [init_y], [0], [0]], dtype=np.float32)
         kalman.statePost = np.array([[init_x], [init_y], [0], [0]], dtype=np.float32)
         return kalman
 
     def detect_ball(self, frame):
-        frame = cv2.resize(frame, (854, 480))
+        #frame = cv2.resize(frame, (854, 480))
         current_time = time.time()
 
         for ball_id, info in self.tracked_balls.items():
