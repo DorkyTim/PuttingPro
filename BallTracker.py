@@ -1,3 +1,4 @@
+
 import cv2
 import numpy as np
 import time
@@ -5,6 +6,7 @@ import math
 import pathlib
 from ultralytics import YOLO
 import warnings
+from scipy.optimize import linear_sum_assignment
 
 # Ensure compatibility on Windows for paths
 pathlib.PosixPath = pathlib.WindowsPath
@@ -18,7 +20,7 @@ class BallTracker:
         self.next_ball_id = 0
         self.tracked_balls = {}
         self.fade_duration = 1.0
-        self.dist_check = 50
+        self.dist_check = 80  # Increased from 50
 
     def _create_kalman_filter(self, init_x, init_y):
         kalman = cv2.KalmanFilter(4, 2)
@@ -60,7 +62,6 @@ class BallTracker:
                     dist = np.linalg.norm(np.array(det['center']) - np.array(pred))
                     cost_matrix[i, j] = dist
 
-            from scipy.optimize import linear_sum_assignment
             row_ind, col_ind = linear_sum_assignment(cost_matrix)
             assigned_preds = set()
 
@@ -72,9 +73,11 @@ class BallTracker:
                     kalman = self.tracked_balls[ball_id]['kalman']
                     prev_pos = self.tracked_balls[ball_id]['pos']
                     dt = current_time - self.tracked_balls[ball_id]['last_seen']
-                    if dt > 0:
-                        vx = (det['center'][0] - prev_pos[0]) / dt
-                        vy = (det['center'][1] - prev_pos[1]) / dt
+                    dx = det['center'][0] - prev_pos[0]
+                    dy = det['center'][1] - prev_pos[1]
+                    if dt > 0 and (abs(dx) > 1 or abs(dy) > 1):
+                        vx = dx / dt
+                        vy = dy / dt
                         alpha = 0.4
                         kalman.statePost[2] = alpha * vx + (1 - alpha) * kalman.statePost[2]
                         kalman.statePost[3] = alpha * vy + (1 - alpha) * kalman.statePost[3]
@@ -98,7 +101,8 @@ class BallTracker:
                         "pos": det['center'],
                         "last_seen": current_time,
                         "radius": det['radius'],
-                        "prediction": det['center']
+                        "prediction": det['center'],
+                        "confidence": 1.0
                     }
                     matched_ids.add(matched_id)
         elif detections:
@@ -110,14 +114,18 @@ class BallTracker:
                     "pos": det['center'],
                     "last_seen": current_time,
                     "radius": det['radius'],
-                    "prediction": det['center']
+                    "prediction": det['center'],
+                    "confidence": 1.0
                 }
                 matched_ids.add(matched_id)
 
         for ball_id in list(self.tracked_balls.keys()):
             if ball_id not in matched_ids:
-                if current_time - self.tracked_balls[ball_id]['last_seen'] >= self.fade_duration * 2:
+                self.tracked_balls[ball_id].setdefault("confidence", 1.0)
+                self.tracked_balls[ball_id]["confidence"] *= 0.9
+                if self.tracked_balls[ball_id]["confidence"] < 0.3:
                     del self.tracked_balls[ball_id]
+                    continue
 
         return {
             'frame_size': (frame.shape[1], frame.shape[0]),
@@ -132,4 +140,3 @@ class BallTracker:
                 if current_time - info['last_seen'] < self.fade_duration
             }
         }
-        
