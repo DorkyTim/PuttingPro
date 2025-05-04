@@ -36,9 +36,10 @@ while cap.isOpened():
 
     # Draw balls and update trail
     for ball_id, info in ball_data['balls'].items():
-        pos = info['pos']
+        pos = info['prediction']  # Use Kalman-filtered center for smooth display
+        #pos = info['pos'] # Use raw position - supposedly more jittery
         radius = info['radius']
-
+    
         scaled_pos = (int(pos[0] * scale_x), int(pos[1] * scale_y))
         scaled_radius = int(radius * (scale_x + scale_y) / 2)
 
