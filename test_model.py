@@ -25,6 +25,9 @@ for filename in os.listdir(image_folder):
     if filename.lower().endswith(('.jpg', '.jpeg', '.png')):
         img_path = os.path.join(image_folder, filename)
         results = model(img_path)
+        
+        for det in results.pandas().xyxy[0].itertuples():
+            print(f"Detected {det.name} with confidence {det.confidence:.3f} at [{det.xmin:.1f}, {det.ymin:.1f}, {det.xmax:.1f}, {det.ymax:.1f}]")
 
         print(f"\n Results for {filename}:")
         results.print()

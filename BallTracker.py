@@ -1,25 +1,24 @@
 import cv2
 import numpy as np
-import torch
 import time
 import math
 import pathlib
-
-# Ensure compatibility for torch hub on Windows
-pathlib.PosixPath = pathlib.WindowsPath
-
+from ultralytics import YOLO
 import warnings
+
+# Ensure compatibility on Windows for paths
+pathlib.PosixPath = pathlib.WindowsPath
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 class BallTracker:
-    def __init__(self, yolo_path='best.pt', confidence=0.3):
-        self.model = torch.hub.load('ultralytics/yolov5', 'custom', path=yolo_path)
+    def __init__(self, yolo_path='bestv8.pt', confidence=0.3):
+        self.model = YOLO(yolo_path)
         self.model.conf = confidence
 
         self.next_ball_id = 0
-        self.tracked_balls = {}  # ball_id: {"pos", "last_seen", "kalman", "radius", "prediction"}
-        self.fade_duration = 1.0  # seconds
-        self.dist_check = 50  # pixels to check identity
+        self.tracked_balls = {}
+        self.fade_duration = 1.0
+        self.dist_check = 50
 
     def _create_kalman_filter(self, init_x, init_y):
         kalman = cv2.KalmanFilter(4, 2)
@@ -39,66 +38,85 @@ class BallTracker:
 
         for ball_id, info in self.tracked_balls.items():
             prediction = info['kalman'].predict()
-            pred_pos = (int(prediction[0]), int(prediction[1]))
-            self.tracked_balls[ball_id]['prediction'] = pred_pos
+            self.tracked_balls[ball_id]['prediction'] = (int(prediction[0]), int(prediction[1]))
 
-        results = self.model(frame)
-        detections = results.pandas().xyxy[0]
-
-        matched_ids = set()
-        if len(detections) > 0:
-            for _, row in detections.iterrows():
-                x1, y1, x2, y2 = map(int, [row['xmin'], row['ymin'], row['xmax'], row['ymax']])
+        results = self.model.predict(frame, verbose=False)[0]
+        detections = []
+        if results and results.boxes is not None:
+            for box in results.boxes.xyxy:
+                x1, y1, x2, y2 = map(int, box[:4])
                 center = ((x1 + x2) // 2, (y1 + y2) // 2)
                 radius = int(max(x2 - x1, y2 - y1) / 2)
+                detections.append({'center': center, 'radius': radius})
 
-                min_dist = float('inf')
-                matched_id = None
-                for ball_id, info in self.tracked_balls.items():
-                    pred_pos = info['prediction']
-                    dist = math.hypot(center[0] - pred_pos[0], center[1] - pred_pos[1])
-                    if dist < self.dist_check and dist < min_dist and current_time - info['last_seen'] < self.fade_duration:
-                        min_dist = dist
-                        matched_id = ball_id
+        matched_ids = set()
+        pred_ids = list(self.tracked_balls.keys())
+        predictions = [self.tracked_balls[bid]['prediction'] for bid in pred_ids]
 
-                if matched_id is None:
+        if predictions and detections:
+            cost_matrix = np.zeros((len(detections), len(predictions)), dtype=np.float32)
+            for i, det in enumerate(detections):
+                for j, pred in enumerate(predictions):
+                    dist = np.linalg.norm(np.array(det['center']) - np.array(pred))
+                    cost_matrix[i, j] = dist
+
+            from scipy.optimize import linear_sum_assignment
+            row_ind, col_ind = linear_sum_assignment(cost_matrix)
+            assigned_preds = set()
+
+            for det_idx, pred_idx in zip(row_ind, col_ind):
+                dist = cost_matrix[det_idx, pred_idx]
+                ball_id = pred_ids[pred_idx]
+                if dist < self.dist_check and current_time - self.tracked_balls[ball_id]['last_seen'] < self.fade_duration:
+                    det = detections[det_idx]
+                    kalman = self.tracked_balls[ball_id]['kalman']
+                    prev_pos = self.tracked_balls[ball_id]['pos']
+                    dt = current_time - self.tracked_balls[ball_id]['last_seen']
+                    if dt > 0:
+                        vx = (det['center'][0] - prev_pos[0]) / dt
+                        vy = (det['center'][1] - prev_pos[1]) / dt
+                        alpha = 0.4
+                        kalman.statePost[2] = alpha * vx + (1 - alpha) * kalman.statePost[2]
+                        kalman.statePost[3] = alpha * vy + (1 - alpha) * kalman.statePost[3]
+                    kalman.correct(np.array([[np.float32(det['center'][0])], [np.float32(det['center'][1])]]))
+
+                    self.tracked_balls[ball_id].update({
+                        "pos": det['center'],
+                        "radius": det['radius'],
+                        "last_seen": current_time,
+                        "prediction": det['center']
+                    })
+                    matched_ids.add(ball_id)
+                    assigned_preds.add(pred_idx)
+
+            for i, det in enumerate(detections):
+                if i not in row_ind:
                     matched_id = self.next_ball_id
                     self.next_ball_id += 1
                     self.tracked_balls[matched_id] = {
-                        "kalman": self._create_kalman_filter(center[0], center[1]),
-                        "pos": center,
+                        "kalman": self._create_kalman_filter(det['center'][0], det['center'][1]),
+                        "pos": det['center'],
                         "last_seen": current_time,
-                        "radius": radius,
-                        "prediction": center
+                        "radius": det['radius'],
+                        "prediction": det['center']
                     }
-                else:
-                    kalman = self.tracked_balls[matched_id]['kalman']
-                    prev_pos = self.tracked_balls[matched_id]['pos']
-                    dt = current_time - self.tracked_balls[matched_id]['last_seen']
-                    if dt > 0:
-                        vx = (center[0] - prev_pos[0]) / dt
-                        vy = (center[1] - prev_pos[1]) / dt
-                        alpha = 0.4
-                        prev_vx = kalman.statePost[2]
-                        prev_vy = kalman.statePost[3]
-                        vx = alpha * vx + (1 - alpha) * prev_vx
-                        vy = alpha * vy + (1 - alpha) * prev_vy
-                        kalman.statePost[2] = vx
-                        kalman.statePost[3] = vy
-                    kalman.correct(np.array([[np.float32(center[0])], [np.float32(center[1])]]))
-
-                    self.tracked_balls[matched_id]['pos'] = center
-                    self.tracked_balls[matched_id]['last_seen'] = current_time
-                    self.tracked_balls[matched_id]['radius'] = radius
-                    self.tracked_balls[matched_id]['prediction'] = center
-
+                    matched_ids.add(matched_id)
+        elif detections:
+            for det in detections:
+                matched_id = self.next_ball_id
+                self.next_ball_id += 1
+                self.tracked_balls[matched_id] = {
+                    "kalman": self._create_kalman_filter(det['center'][0], det['center'][1]),
+                    "pos": det['center'],
+                    "last_seen": current_time,
+                    "radius": det['radius'],
+                    "prediction": det['center']
+                }
                 matched_ids.add(matched_id)
 
-        # Remove expired tracks
         for ball_id in list(self.tracked_balls.keys()):
             if ball_id not in matched_ids:
-                time_since_seen = current_time - self.tracked_balls[ball_id]['last_seen']
-                if time_since_seen >= self.fade_duration * 2:
+                if current_time - self.tracked_balls[ball_id]['last_seen'] >= self.fade_duration * 2:
                     del self.tracked_balls[ball_id]
 
         return {
@@ -114,3 +132,4 @@ class BallTracker:
                 if current_time - info['last_seen'] < self.fade_duration
             }
         }
+        

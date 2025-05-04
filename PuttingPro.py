@@ -5,13 +5,14 @@ from TrailManager import TrailManager
 
 # Set up camera
 cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc('M', 'J', 'P', 'G'))
+cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+#cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 cap.set(cv2.CAP_PROP_FPS, 60.0)
 
 # Initialize tracker and trail manager
-tracker = BallTracker(yolo_path='best.pt', confidence=0.3)
+tracker = BallTracker(yolo_path='bestv8.pt', confidence=0.3)
 trail_manager = TrailManager()
 
 while cap.isOpened():
